@@ -1,0 +1,22 @@
+{
+  "name": "rea-ipad-agentic-ide",
+  "version": "1.0.0",
+  "description": "Next-Gen Multilingual Multi-Agent IDE optimized for Apple Silicon iPad Pro M2",
+  "main": "js/app.js",
+  "scripts": {
+    "start": "npx serve . -p 8080"
+  },
+  "keywords": [
+    "ide",
+    "ipad",
+    "apple-silicon",
+    "m2",
+    "agentic",
+    "antigravity",
+    "monaco-editor",
+    "mcp",
+    "gemini"
+  ],
+  "author": "Rogerr Carvajal",
+  "license": "MIT"
+}

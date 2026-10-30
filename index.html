@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="REA IDE" />
+  <meta name="theme-color" content="#101520" />
+  <title>REA Agentic IDE - iPad Pro M2 Optimized</title>
+  
+  <link rel="manifest" href="manifest.json" />
+  <link rel="stylesheet" href="css/styles.css" />
+
+  <!-- Mermaid.js for Living Artifacts -->
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <script>
+    if (window.mermaid) {
+      mermaid.initialize({ startOnLoad: false, theme: 'dark', securityLevel: 'loose' });
+    }
+  </script>
+
+  <!-- Monaco Editor Loader -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs/loader.min.js"></script>
+</head>
+<body>
+  <div id="app-container">
+    <!-- Top Header -->
+    <header id="top-header">
+      <div class="brand-section">
+        <div class="brand-logo">R</div>
+        <div class="brand-title">REA Agentic IDE</div>
+        <span class="ipad-badge">iPad Pro M2</span>
+      </div>
+
+      <div class="header-center">
+        <div class="model-selector-container">
+          <label for="model-select" style="color: #64748b; font-size: 11px; margin-right: 4px;">Modelo:</label>
+          <select id="model-select">
+            <option value="gemini-2.5-flash">Gemini 2.5 Flash (Ultra Fast)</option>
+            <option value="gemini-pro">Gemini Pro 1.5 (Deep Reasoning)</option>
+            <option value="gemini-argon">Gemini Argon (Autonomous Coding)</option>
+            <option value="ollama-local">Ollama Local / LAN</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="header-actions">
+        <button id="btn-open-folder" class="btn">
+          <span>📁</span> Abrir Carpeta
+        </button>
+        <button id="btn-save" class="btn btn-primary">
+          <span>💾</span> Guardar
+        </button>
+        <button id="btn-toggle-agent" class="btn" style="border-color: rgba(168, 85, 247, 0.4);">
+          <span style="color: #a855f7;">✨</span> Agente
+        </button>
+        <button id="btn-toggle-terminal" class="btn">
+          <span>⌨️</span> Terminal
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Workspace -->
+    <main id="workspace-body">
+      <!-- Activity Bar -->
+      <nav id="activity-bar">
+        <div id="btn-toggle-sidebar" class="activity-icon active" title="Explorador de Archivos">📁</div>
+        <div class="activity-icon" title="Búsqueda Global">🔍</div>
+        <div class="activity-icon" title="Control de Versiones (Git)">🌿</div>
+        <div class="activity-icon" title="Herramientas & MCP">🧩</div>
+      </nav>
+
+      <!-- Sidebar Explorer -->
+      <aside id="sidebar-panel">
+        <div class="sidebar-header">
+          <span id="project-title">EXPLORADOR</span>
+          <div class="sidebar-actions">
+            <button class="icon-btn" title="Nuevo Archivo">📄+</button>
+            <button class="icon-btn" title="Refrescar">🔄</button>
+          </div>
+        </div>
+        <div id="file-tree-container"></div>
+      </aside>
+
+      <!-- Editor & Bottom Workspace Area -->
+      <section id="editor-area">
+        <!-- Tab Bar -->
+        <div id="tabs-bar"></div>
+
+        <!-- Monaco Editor Viewport -->
+        <div id="monaco-container"></div>
+
+        <!-- Collapsible Bottom Terminal Panel -->
+        <div id="terminal-panel" class="collapsed">
+          <div class="terminal-header">
+            <span>TERMINAL VIRTUAL (iPadOS POSIX ARM64)</span>
+            <button class="icon-btn" onclick="document.getElementById('terminal-panel').classList.add('collapsed')">✕</button>
+          </div>
+          <div id="terminal-body" class="terminal-body"></div>
+        </div>
+      </section>
+
+      <!-- Right Agent Panel (Antigravity Mode) -->
+      <aside id="agent-panel">
+        <div class="agent-header">
+          <div class="agent-header-title">
+            <span>✨</span>
+            <span>Agente Antigravity</span>
+          </div>
+          <span class="agent-mode-badge">Autónomo</span>
+        </div>
+
+        <!-- Quick Action Chips -->
+        <div class="quick-chips-row">
+          <div class="chip" data-action="Generar Diagrama C4 en Mermaid">📐 C4 Model</div>
+          <div class="chip" data-action="Extraer Contrato OpenAPI 3.1">📜 OpenAPI 3.1</div>
+          <div class="chip" data-action="Modelar Base de Datos DER">🗄️ DER Mermaid</div>
+          <div class="chip" data-action="Refactorizar aplicando Clean Code">🧼 Clean Code</div>
+        </div>
+
+        <!-- Conversational Stream -->
+        <div id="agent-messages" class="agent-messages-container"></div>
+
+        <!-- Prompt Input -->
+        <div class="agent-input-container">
+          <textarea id="agent-prompt-input" placeholder="Pregunta o instruye al agente en tu iPad..."></textarea>
+          <button id="btn-send-agent" class="btn btn-primary" style="height: 40px; padding: 0 14px;">
+            <span>➤</span>
+          </button>
+        </div>
+      </aside>
+    </main>
+
+    <!-- Floating Touch Modifier Bar for iPad Pro -->
+    <footer id="touch-toolbar"></footer>
+  </div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
