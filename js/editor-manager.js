@@ -149,6 +149,32 @@ export class EditorManager {
     return this.editor ? this.editor.getValue() : '';
   }
 
+  getSelectionText() {
+    if (!this.editor) return '';
+    const sel = this.editor.getSelection();
+    return sel && !sel.isEmpty() ? this.editor.getModel().getValueInRange(sel) : '';
+  }
+
+  /** Refresh an open tab after the file was written by the agent/git (keeps undo stack). */
+  updateFileIfOpen(path, content) {
+    const tab = this.tabs.get(path);
+    if (!tab) return false;
+    if (tab.model.getValue() !== content) {
+      tab.model.pushEditOperations([], [{ range: tab.model.getFullModelRange(), text: content }], () => null);
+    }
+    tab.isDirty = false;
+    return true;
+  }
+
+  closeAll() {
+    for (const path of Array.from(this.tabs.keys())) this.closeTab(path);
+  }
+
+  markSaved(path) {
+    const tab = this.tabs.get(path);
+    if (tab) tab.isDirty = false;
+  }
+
   setValue(val) {
     if (this.editor) this.editor.setValue(val);
   }

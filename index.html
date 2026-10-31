@@ -4,137 +4,252 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="REA IDE" />
   <meta name="theme-color" content="#101520" />
-  <title>REA Agentic IDE - iPad Pro M2 Optimized</title>
-  
+  <title>REA Agentic IDE — iPad Pro M2</title>
+
   <link rel="manifest" href="manifest.json" />
   <link rel="stylesheet" href="css/styles.css" />
 
-  <!-- Mermaid.js for Living Artifacts -->
+  <!-- Vendored UMD libraries (loaded BEFORE Monaco's AMD loader so they register as globals) -->
+  <script src="vendor/lightning-fs.min.js"></script>
+  <script src="vendor/isomorphic-git.umd.min.js"></script>
+  <script src="vendor/isomorphic-git-http-web.umd.js"></script>
+  <script src="vendor/marked.umd.js"></script>
+  <script src="vendor/purify.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
   <script>
-    if (window.mermaid) {
-      mermaid.initialize({ startOnLoad: false, theme: 'dark', securityLevel: 'loose' });
-    }
+    if (window.mermaid) mermaid.initialize({ startOnLoad: false, theme: 'dark', securityLevel: 'strict' });
   </script>
 
-  <!-- Monaco Editor Loader -->
+  <!-- Monaco Editor AMD loader (must stay after the UMD libraries above) -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs/loader.min.js"></script>
 </head>
 <body>
   <div id="app-container">
-    <!-- Top Header -->
+    <!-- ═════════════ Header ═════════════ -->
     <header id="top-header">
       <div class="brand-section">
         <div class="brand-logo">R</div>
         <div class="brand-title">REA Agentic IDE</div>
-        <span class="ipad-badge">iPad Pro M2</span>
+        <span class="ipad-badge" id="workspace-badge">demo</span>
       </div>
 
       <div class="header-center">
         <div class="model-selector-container">
-          <label for="model-select" style="color: #64748b; font-size: 11px; margin-right: 4px;">Modelo:</label>
-          <select id="model-select">
-            <option value="gemini-2.5-flash">Gemini 2.5 Flash (Ultra Fast)</option>
-            <option value="gemini-pro">Gemini Pro 1.5 (Deep Reasoning)</option>
-            <option value="gemini-argon">Gemini Argon (Autonomous Coding)</option>
-            <option value="ollama-local">Ollama Local / LAN</option>
-          </select>
+          <label for="model-select">Modelo:</label>
+          <select id="model-select"></select>
+          <button class="icon-btn" id="btn-refresh-models" title="Actualizar lista de modelos">↻</button>
         </div>
       </div>
 
       <div class="header-actions">
-        <button id="btn-open-folder" class="btn">
-          <span>📁</span> Abrir Carpeta
-        </button>
-        <button id="btn-save" class="btn btn-primary">
-          <span>💾</span> Guardar
-        </button>
-        <button id="btn-toggle-agent" class="btn" style="border-color: rgba(168, 85, 247, 0.4);">
-          <span style="color: #a855f7;">✨</span> Agente
-        </button>
-        <button id="btn-toggle-terminal" class="btn">
-          <span>⌨️</span> Terminal
+        <!-- RF1: carpeta de trabajo -->
+        <div class="dropdown">
+          <button id="btn-open-folder" class="btn"><span>📁</span> Abrir Carpeta ▾</button>
+          <div class="dropdown-menu" id="menu-folder">
+            <button data-folder-action="pick">📂 Seleccionar carpeta del dispositivo…</button>
+            <button data-folder-action="clone">🔗 Clonar repositorio Git…</button>
+            <div class="menu-sep"></div>
+            <button data-folder-action="pull">⬇️ Git Pull (actualizar)</button>
+            <button data-folder-action="commit-push">⬆️ Commit &amp; Push…</button>
+            <div class="menu-sep"></div>
+            <div class="menu-label">Workspaces guardados</div>
+            <div id="menu-workspaces"></div>
+          </div>
+        </div>
+
+        <!-- RF2: guardar -->
+        <div class="dropdown">
+          <button id="btn-save" class="btn btn-primary"><span>💾</span> Guardar ▾</button>
+          <div class="dropdown-menu" id="menu-save">
+            <button data-save-action="file">💾 Guardar archivo actual <kbd>⌘S</kbd></button>
+            <div class="menu-sep"></div>
+            <button data-save-action="plan">📋 Guardar Plan → Docs/</button>
+            <button data-save-action="walkthrough">🧭 Guardar Walkthrough → Docs/</button>
+            <button data-save-action="chat">💬 Exportar conversación → Docs/</button>
+          </div>
+        </div>
+
+        <button id="btn-toggle-agent" class="btn btn-agent"><span>✨</span> Agente</button>
+        <button id="btn-toggle-terminal" class="btn"><span>⌨️</span> Terminal</button>
+
+        <!-- RF3: cuenta -->
+        <button id="btn-account" class="btn account-pill" title="Cuenta, modelos y credenciales">
+          <span id="account-avatar">⚙️</span><span id="account-label">Cuenta</span>
         </button>
       </div>
     </header>
 
-    <!-- Main Workspace -->
+    <!-- ═════════════ Workspace ═════════════ -->
     <main id="workspace-body">
-      <!-- Activity Bar -->
       <nav id="activity-bar">
-        <div id="btn-toggle-sidebar" class="activity-icon active" title="Explorador de Archivos">📁</div>
-        <div class="activity-icon" title="Búsqueda Global">🔍</div>
-        <div class="activity-icon" title="Control de Versiones (Git)">🌿</div>
-        <div class="activity-icon" title="Herramientas & MCP">🧩</div>
+        <div class="activity-icon active" data-view="explorer" title="Explorador">📁</div>
+        <div class="activity-icon" data-view="git" title="Control de versiones (Git)">🌿</div>
+        <div class="activity-icon activity-bottom" id="btn-activity-settings" title="Configuración">⚙️</div>
       </nav>
 
-      <!-- Sidebar Explorer -->
       <aside id="sidebar-panel">
-        <div class="sidebar-header">
-          <span id="project-title">EXPLORADOR</span>
-          <div class="sidebar-actions">
-            <button class="icon-btn" title="Nuevo Archivo">📄+</button>
-            <button class="icon-btn" title="Refrescar">🔄</button>
+        <!-- Explorer view -->
+        <section class="sidebar-view" data-view="explorer">
+          <div class="sidebar-header">
+            <span id="project-title">EXPLORADOR</span>
+            <div class="sidebar-actions">
+              <button class="icon-btn" id="btn-new-file" title="Nuevo archivo">📄+</button>
+              <button class="icon-btn" id="btn-refresh-tree" title="Refrescar">🔄</button>
+            </div>
           </div>
-        </div>
-        <div id="file-tree-container"></div>
+          <div id="file-tree-container"></div>
+        </section>
+
+        <!-- Git view -->
+        <section class="sidebar-view hidden" data-view="git">
+          <div class="sidebar-header">
+            <span>CONTROL DE VERSIONES</span>
+            <div class="sidebar-actions">
+              <button class="icon-btn" id="btn-git-refresh" title="Refrescar estado">🔄</button>
+            </div>
+          </div>
+          <div class="git-panel">
+            <div id="git-info" class="git-info"></div>
+            <div class="git-buttons">
+              <button class="btn btn-sm" id="btn-git-pull">⬇️ Pull</button>
+              <button class="btn btn-sm" id="btn-git-push">⬆️ Push</button>
+            </div>
+            <textarea id="git-commit-msg" placeholder="Mensaje de commit"></textarea>
+            <button class="btn btn-primary btn-sm btn-block" id="btn-git-commit">✓ Commit de todos los cambios</button>
+            <div class="menu-label">Cambios</div>
+            <div id="git-changes"></div>
+          </div>
+        </section>
       </aside>
 
-      <!-- Editor & Bottom Workspace Area -->
       <section id="editor-area">
-        <!-- Tab Bar -->
         <div id="tabs-bar"></div>
-
-        <!-- Monaco Editor Viewport -->
         <div id="monaco-container"></div>
 
-        <!-- Collapsible Bottom Terminal Panel -->
+        <!-- RF4: terminal -->
         <div id="terminal-panel" class="collapsed">
           <div class="terminal-header">
-            <span>TERMINAL VIRTUAL (iPadOS POSIX ARM64)</span>
-            <button class="icon-btn" onclick="document.getElementById('terminal-panel').classList.add('collapsed')">✕</button>
+            <span>TERMINAL · <span id="terminal-mode-label">local (workspace)</span></span>
+            <div>
+              <button class="icon-btn" id="btn-terminal-clear" title="Limpiar">🧹</button>
+              <button class="icon-btn" id="btn-terminal-close" title="Cerrar">✕</button>
+            </div>
           </div>
           <div id="terminal-body" class="terminal-body"></div>
         </div>
       </section>
 
-      <!-- Right Agent Panel (Antigravity Mode) -->
+      <!-- RF5: agente -->
       <aside id="agent-panel">
         <div class="agent-header">
-          <div class="agent-header-title">
-            <span>✨</span>
-            <span>Agente Antigravity</span>
+          <div class="agent-header-title"><span>✨</span><span>Agente REA</span></div>
+          <div class="agent-header-actions">
+            <span class="agent-mode-badge" id="agent-status-badge">listo</span>
+            <button class="icon-btn" id="btn-agent-clear" title="Nueva conversación">🗑️</button>
           </div>
-          <span class="agent-mode-badge">Autónomo</span>
         </div>
 
-        <!-- Quick Action Chips -->
         <div class="quick-chips-row">
-          <div class="chip" data-action="Generar Diagrama C4 en Mermaid">📐 C4 Model</div>
-          <div class="chip" data-action="Extraer Contrato OpenAPI 3.1">📜 OpenAPI 3.1</div>
-          <div class="chip" data-action="Modelar Base de Datos DER">🗄️ DER Mermaid</div>
-          <div class="chip" data-action="Refactorizar aplicando Clean Code">🧼 Clean Code</div>
+          <div class="chip" data-action="Explica el archivo activo: propósito, flujo principal y posibles problemas.">🔎 Explicar</div>
+          <div class="chip" data-action="Genera un diagrama C4 (contexto y contenedores) en Mermaid del proyecto actual.">📐 C4</div>
+          <div class="chip" data-action="Deduce un contrato OpenAPI 3.1 en YAML a partir del código del proyecto.">📜 OpenAPI</div>
+          <div class="chip" data-action="Modela el diagrama Entidad-Relación en Mermaid (erDiagram) a partir del código/SQL.">🗄️ DER</div>
+          <div class="chip" data-action="Refactoriza el archivo activo aplicando Clean Code y devuélvelo completo con su path.">🧼 Clean Code</div>
+          <div class="chip chip-doc" data-save-action="plan">📋 Plan → Docs</div>
+          <div class="chip chip-doc" data-save-action="walkthrough">🧭 Walkthrough → Docs</div>
         </div>
 
-        <!-- Conversational Stream -->
         <div id="agent-messages" class="agent-messages-container"></div>
 
-        <!-- Prompt Input -->
         <div class="agent-input-container">
-          <textarea id="agent-prompt-input" placeholder="Pregunta o instruye al agente en tu iPad..."></textarea>
-          <button id="btn-send-agent" class="btn btn-primary" style="height: 40px; padding: 0 14px;">
-            <span>➤</span>
-          </button>
+          <textarea id="agent-prompt-input" placeholder="Pregunta o instruye al agente… (Enter envía, Shift+Enter nueva línea)" enterkeyhint="send"></textarea>
+          <button id="btn-send-agent" class="btn btn-primary btn-send" title="Enviar">➤</button>
+          <button id="btn-stop-agent" class="btn btn-danger btn-send hidden" title="Detener">■</button>
         </div>
       </aside>
     </main>
 
-    <!-- Floating Touch Modifier Bar for iPad Pro -->
     <footer id="touch-toolbar"></footer>
   </div>
+
+  <!-- Hidden folder picker for iPad Safari (iPadOS 18.4+) / browsers without showDirectoryPicker -->
+  <input type="file" id="folder-input" webkitdirectory multiple hidden />
+
+  <!-- ═════════════ Settings / Account modal (RF3) ═════════════ -->
+  <div class="modal-backdrop hidden" id="settings-modal">
+    <div class="modal">
+      <div class="modal-header">
+        <h2>⚙️ Cuenta, modelos y credenciales</h2>
+        <button class="icon-btn" data-close-modal>✕</button>
+      </div>
+      <div class="modal-body">
+        <section class="settings-section">
+          <h3>🔐 Cuenta Google</h3>
+          <div id="google-account-box" class="account-box"></div>
+          <p class="hint">Usa tu cuenta Google para llamar a la API de Gemini con la cuota de <strong>tu proyecto de Google Cloud</strong>
+            (nivel gratuito o de pago). Requiere un <em>OAuth Client ID</em> tipo "Aplicación web" y que el IDE se sirva por HTTPS o localhost.</p>
+          <label>OAuth Client ID<input type="text" id="set-googleClientId" placeholder="xxxx.apps.googleusercontent.com" /></label>
+          <label>ID del proyecto de Google Cloud<input type="text" id="set-googleProjectId" placeholder="mi-proyecto-123" /></label>
+          <div class="row">
+            <button class="btn btn-primary btn-sm" id="btn-google-signin">Iniciar sesión con Google</button>
+            <button class="btn btn-sm" id="btn-google-signout">Cerrar sesión</button>
+          </div>
+        </section>
+
+        <section class="settings-section">
+          <h3>🔑 API key de Gemini (Google AI Studio)</h3>
+          <p class="hint">La forma más directa (funciona por HTTP en la LAN): crea una key gratis en
+            <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a>. Si tu proyecto tiene facturación, usa los límites de pago.</p>
+          <label>API key<input type="password" id="set-geminiApiKey" placeholder="AIza…" autocomplete="off" /></label>
+          <label>Credencial preferida
+            <select id="set-aiProvider">
+              <option value="auto">Automático (cuenta Google si hay sesión; si no, API key)</option>
+              <option value="gemini-oauth">Solo cuenta Google</option>
+              <option value="gemini-key">Solo API key</option>
+            </select>
+          </label>
+          <label>Temperatura <input type="number" id="set-temperature" min="0" max="2" step="0.1" /></label>
+          <div class="row"><button class="btn btn-sm" id="btn-test-ai">🧪 Probar conexión</button><span id="test-ai-result" class="hint"></span></div>
+        </section>
+
+        <section class="settings-section">
+          <h3>🌿 Git</h3>
+          <label>Nombre de autor<input type="text" id="set-gitAuthorName" placeholder="Tu Nombre" /></label>
+          <label>Email de autor<input type="email" id="set-gitAuthorEmail" placeholder="tu@email.com" /></label>
+          <label>GitHub token (repos privados y push)<input type="password" id="set-githubToken" placeholder="github_pat_… / ghp_…" autocomplete="off" /></label>
+          <p class="hint">Token fine-grained con permiso <em>Contents: Read and write</em>. Se guarda solo en este dispositivo.</p>
+        </section>
+
+        <section class="settings-section">
+          <h3>🖥️ Terminal PC (puente XAMPP)</h3>
+          <p class="hint">Permite ejecutar CLIs reales del PC (git, npm, <code>gemini -p</code>, <code>ollama run</code>) desde el iPad.
+            En el PC copia <code>api/config.example.php</code> a <code>api/config.local.php</code> y define <code>bridge_token</code>.</p>
+          <label>Token del puente<input type="password" id="set-bridgeToken" autocomplete="off" /></label>
+        </section>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-primary" id="btn-settings-save">Guardar configuración</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Generic prompt modal -->
+  <div class="modal-backdrop hidden" id="prompt-modal">
+    <div class="modal modal-sm">
+      <div class="modal-header"><h2 id="prompt-title"></h2><button class="icon-btn" data-close-modal>✕</button></div>
+      <div class="modal-body" id="prompt-body"></div>
+      <div class="modal-footer">
+        <button class="btn" data-close-modal>Cancelar</button>
+        <button class="btn btn-primary" id="prompt-ok">Aceptar</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast-container"></div>
 
   <script type="module" src="js/app.js"></script>
 </body>

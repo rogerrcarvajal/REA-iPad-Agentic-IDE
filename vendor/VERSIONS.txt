@@ -1,0 +1,4 @@
+isomorphic-git 1.44.8 MIT
+@isomorphic-git/lightning-fs 4.10.4 MIT
+marked 18.1.2 MIT
+dompurify 3.4.17 (MPL-2.0 OR Apache-2.0)

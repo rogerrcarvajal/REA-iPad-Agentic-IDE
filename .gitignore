@@ -1,0 +1,11 @@
+# Local configuration with private secrets
+api/config.local.php
+
+# OS metadata
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs & temp
+*.log
+node_modules/

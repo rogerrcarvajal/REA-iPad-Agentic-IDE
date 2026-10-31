@@ -1,157 +1,301 @@
 /**
- * File System Manager
- * Supports File System Access API (showDirectoryPicker) for real local disk folders
- * with fallback to Origin Private File System (OPFS) and in-memory sample project.
+ * Workspace File System (RF1)
+ *
+ * Two backends behind one API:
+ *   - 'native' : File System Access API (showDirectoryPicker). Chrome/Edge on PC.
+ *                Reads/writes the real folder on disk.
+ *   - 'idb'    : Persistent browser workspace (LightningFS over IndexedDB). Used on
+ *                iPad Safari, where showDirectoryPicker does not exist. Folders picked
+ *                from the Files app (<input webkitdirectory>, iPadOS 18.4+) are imported
+ *                here, and Git repositories are cloned/pulled/pushed here (see git-service.js).
+ *
+ * Paths exposed to the rest of the app are always relative ("src/app.ts").
  */
+const SKIP_DIRS = new Set(['.git', 'node_modules', '.DS_Store', '__pycache__', '.venv']);
+const LAST_WS_KEY = 'rea-ide-last-workspace';
+const MAX_IMPORT_BYTES = 5 * 1024 * 1024; // skip single files larger than 5 MB on import
+
 export class FileSystemManager {
   constructor() {
+    this.lfs = new window.LightningFS('rea-ide-workspaces');
+    this.pfs = this.lfs.promises;
     this.directoryHandle = null;
-    this.virtualFiles = new Map();
-    this.currentMode = 'virtual'; // 'native' | 'virtual'
-    this.projectName = 'Proyecto Demo';
-    this.initDefaultProject();
+    this.currentMode = 'idb'; // 'idb' | 'native'
+    this.projectName = 'demo';
   }
 
-  initDefaultProject() {
-    this.virtualFiles.set('README.md', {
-      name: 'README.md',
-      path: 'README.md',
-      content: '# Bienvenido a REA Agentic IDE para iPad Pro M2\n\nEste entorno de desarrollo ha sido optimizado para la memoria unificada del procesador Apple Silicon M2.\n\n### Características principales:\n- **Monaco Editor:** Resaltado sintáctico, autocompletado y atajos de VS Code.\n- **Modo Agente Antigravity:** Planificación autónoma, llamadas a herramientas y Living Artifacts (Mermaid).\n- **Barra táctil flotante:** Atajos rápidos a caracteres esenciales sin teclado físico.\n- **File System Access:** Pulsa "Abrir Carpeta" para trabajar sobre carpetas reales de tu iPad o PC.\n',
-      kind: 'file'
-    });
-
-    this.virtualFiles.set('src/main.py', {
-      name: 'main.py',
-      path: 'src/main.py',
-      content: '"""\nServicio de procesamiento de alto rendimiento en iPad Pro M2\n"""\nimport sys\n\ndef execute_task(name: str):\n    print(f"[*] Ejecutando tarea agéntica: {name}")\n    return {"status": "success", "device": "iPad Pro M2", "arch": "ARM64"}\n\nif __name__ == "__main__":\n    result = execute_task("Deconstrucción Clean-Room")\n    print(result)\n',
-      kind: 'file'
-    });
-
-    this.virtualFiles.set('src/app.ts', {
-      name: 'app.ts',
-      path: 'src/app.ts',
-      content: 'export interface CleanRoomContract {\n  id: string;\n  name: string;\n  status: "draft" | "active" | "verified";\n}\n\nexport class ContractService {\n  private contracts: Map<string, CleanRoomContract> = new Map();\n\n  public register(contract: CleanRoomContract): boolean {\n    this.contracts.set(contract.id, contract);\n    console.log(`[+] Contrato registrado: ${contract.name}`);\n    return true;\n  }\n}\n',
-      kind: 'file'
-    });
+  // ───────────────────────────── capabilities ─────────────────────────────
+  get supportsNativePicker() {
+    return 'showDirectoryPicker' in window;
   }
 
-  async openDirectoryPicker() {
-    if ('showDirectoryPicker' in window) {
-      try {
-        this.directoryHandle = await window.showDirectoryPicker({
-          mode: 'readwrite'
-        });
-        this.currentMode = 'native';
-        this.projectName = this.directoryHandle.name;
-        return { success: true, name: this.projectName };
-      } catch (err) {
-        if (err.name === 'AbortError') {
-          return { success: false, aborted: true };
-        }
-        console.warn('File System Access API error, using virtual fallback:', err);
-      }
+  get supportsGit() {
+    return this.currentMode === 'idb';
+  }
+
+  /** Absolute dir of the active idb workspace (used by isomorphic-git). */
+  get dir() {
+    return `/${this.projectName}`;
+  }
+
+  // ───────────────────────────── workspaces ─────────────────────────────
+  async init() {
+    const last = localStorage.getItem(LAST_WS_KEY);
+    const list = await this.listWorkspaces();
+    if (!list.includes('demo')) await this._seedDemo();
+    this.projectName = last && (await this._exists(`/${last}`)) ? last : 'demo';
+    this.currentMode = 'idb';
+    return this.projectName;
+  }
+
+  async listWorkspaces() {
+    try {
+      return (await this.pfs.readdir('/')).sort();
+    } catch {
+      return [];
     }
-    // Fallback: notify that virtual workspace is active
-    return { success: true, name: this.projectName, fallback: true };
   }
 
+  async openWorkspace(name) {
+    if (!(await this._exists(`/${name}`))) throw new Error(`Workspace inexistente: ${name}`);
+    this.directoryHandle = null;
+    this.currentMode = 'idb';
+    this.projectName = name;
+    localStorage.setItem(LAST_WS_KEY, name);
+    return name;
+  }
+
+  async deleteWorkspace(name) {
+    await this._rmrf(`/${name}`);
+    if (this.projectName === name && this.currentMode === 'idb') {
+      if (name === 'demo') await this.init();
+      else await this.openWorkspace('demo').catch(() => this.init());
+    }
+  }
+
+  sanitizeName(name) {
+    return (name || 'workspace').replace(/[^\w.-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'workspace';
+  }
+
+  async uniqueWorkspaceName(base) {
+    const list = await this.listWorkspaces();
+    let name = this.sanitizeName(base);
+    let i = 2;
+    while (list.includes(name)) name = `${this.sanitizeName(base)}-${i++}`;
+    return name;
+  }
+
+  /** PC (Chrome/Edge): mount a real folder with read/write access. */
+  async openNativeDirectory() {
+    const handle = await window.showDirectoryPicker({ mode: 'readwrite' });
+    this.directoryHandle = handle;
+    this.currentMode = 'native';
+    this.projectName = handle.name;
+    return { name: handle.name, mode: 'native' };
+  }
+
+  /**
+   * iPad Safari (and any browser): import a FileList from <input webkitdirectory>
+   * into a new persistent idb workspace. Returns stats.
+   */
+  async importFileList(fileList, onProgress) {
+    const files = Array.from(fileList);
+    if (!files.length) throw new Error('No se seleccionó ningún archivo.');
+    const hasRelative = !!files[0].webkitRelativePath;
+    const rootName = hasRelative ? files[0].webkitRelativePath.split('/')[0] : 'importado';
+    const name = await this.uniqueWorkspaceName(rootName);
+    await this.pfs.mkdir(`/${name}`);
+
+    let imported = 0;
+    let skipped = 0;
+    for (const file of files) {
+      let rel = file.webkitRelativePath || file.name;
+      if (hasRelative) rel = rel.split('/').slice(1).join('/');
+      if (!rel || rel.split('/').some((p) => SKIP_DIRS.has(p)) || file.size > MAX_IMPORT_BYTES) {
+        skipped++;
+        continue;
+      }
+      const data = new Uint8Array(await file.arrayBuffer());
+      await this._writeIdb(`/${name}/${rel}`, data);
+      imported++;
+      onProgress?.(imported, files.length, rel);
+    }
+    await this.openWorkspace(name);
+    return { name, imported, skipped };
+  }
+
+  // ───────────────────────────── file API ─────────────────────────────
   async getFileTree() {
     if (this.currentMode === 'native' && this.directoryHandle) {
-      return await this._scanNativeDirectory(this.directoryHandle, '');
-    } else {
-      return this._buildVirtualTree();
+      return this._scanNative(this.directoryHandle, '');
     }
+    return this._scanIdb(this.dir, '');
   }
 
-  async _scanNativeDirectory(dirHandle, basePath) {
-    const items = [];
-    for await (const entry of dirHandle.values()) {
-      const itemPath = basePath ? `${basePath}/${entry.name}` : entry.name;
-      if (entry.kind === 'directory') {
-        if (entry.name === '.git' || entry.name === 'node_modules') continue;
-        const children = await this._scanNativeDirectory(entry, itemPath);
-        items.push({
-          name: entry.name,
-          path: itemPath,
-          kind: 'directory',
-          handle: entry,
-          children
-        });
-      } else {
-        items.push({
-          name: entry.name,
-          path: itemPath,
-          kind: 'file',
-          handle: entry
-        });
+  /** Flat list of file paths (used for AI context and terminal). */
+  async listAllFiles(limit = 2000) {
+    const out = [];
+    const walk = (items) => {
+      for (const it of items) {
+        if (out.length >= limit) return;
+        if (it.kind === 'file') out.push(it.path);
+        else if (it.children) walk(it.children);
       }
-    }
-    return items.sort((a, b) => {
-      if (a.kind === b.kind) return a.name.localeCompare(b.name);
-      return a.kind === 'directory' ? -1 : 1;
-    });
-  }
-
-  _buildVirtualTree() {
-    const root = [];
-    const dirMap = new Map();
-
-    for (const [path, file] of this.virtualFiles.entries()) {
-      const parts = path.split('/');
-      if (parts.length === 1) {
-        root.push({ name: file.name, path: file.path, kind: 'file' });
-      } else {
-        let currentLevel = root;
-        let accumulatedPath = '';
-        for (let i = 0; i < parts.length - 1; i++) {
-          const dirName = parts[i];
-          accumulatedPath = accumulatedPath ? `${accumulatedPath}/${dirName}` : dirName;
-          if (!dirMap.has(accumulatedPath)) {
-            const newDir = { name: dirName, path: accumulatedPath, kind: 'directory', children: [] };
-            dirMap.set(accumulatedPath, newDir);
-            currentLevel.push(newDir);
-          }
-          currentLevel = dirMap.get(accumulatedPath).children;
-        }
-        currentLevel.push({ name: file.name, path: file.path, kind: 'file' });
-      }
-    }
-    return root;
+    };
+    walk(await this.getFileTree());
+    return out;
   }
 
   async readFile(path) {
     if (this.currentMode === 'native' && this.directoryHandle) {
-      const fileHandle = await this._resolveNativePath(path);
-      if (!fileHandle) throw new Error(`Archivo no encontrado: ${path}`);
-      const file = await fileHandle.getFile();
-      return await file.text();
-    } else {
-      const item = this.virtualFiles.get(path);
-      if (!item) throw new Error(`Archivo virtual no encontrado: ${path}`);
-      return item.content;
+      const fh = await this._resolveNative(path, false);
+      return await (await fh.getFile()).text();
     }
+    return await this.pfs.readFile(`${this.dir}/${path}`, { encoding: 'utf8' });
   }
 
   async writeFile(path, content) {
+    path = path.replace(/^\/+/, '');
     if (this.currentMode === 'native' && this.directoryHandle) {
-      const fileHandle = await this._resolveNativePath(path, true);
-      const writable = await fileHandle.createWritable();
-      await writable.write(content);
-      await writable.close();
+      const fh = await this._resolveNative(path, true);
+      const w = await fh.createWritable();
+      await w.write(content);
+      await w.close();
       return true;
-    } else {
-      const name = path.split('/').pop();
-      this.virtualFiles.set(path, { name, path, content, kind: 'file' });
-      return true;
+    }
+    await this._writeIdb(`${this.dir}/${path}`, content);
+    return true;
+  }
+
+  async exists(path) {
+    try {
+      if (this.currentMode === 'native' && this.directoryHandle) {
+        await this._resolveNative(path, false);
+        return true;
+      }
+      return await this._exists(`${this.dir}/${path}`);
+    } catch {
+      return false;
     }
   }
 
-  async _resolveNativePath(path, create = false) {
-    const parts = path.split('/');
-    let current = this.directoryHandle;
-    for (let i = 0; i < parts.length - 1; i++) {
-      current = await current.getDirectoryHandle(parts[i], { create });
+  async deleteFile(path) {
+    if (this.currentMode === 'native' && this.directoryHandle) {
+      const parts = path.split('/');
+      let cur = this.directoryHandle;
+      for (const p of parts.slice(0, -1)) cur = await cur.getDirectoryHandle(p);
+      await cur.removeEntry(parts.at(-1), { recursive: true });
+      return;
     }
-    return await current.getFileHandle(parts[parts.length - 1], { create });
+    await this._rmrf(`${this.dir}/${path}`);
+  }
+
+  // ───────────────────────────── idb internals ─────────────────────────────
+  async _exists(abs) {
+    try {
+      await this.pfs.stat(abs);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async _mkdirp(absDir) {
+    const parts = absDir.split('/').filter(Boolean);
+    let cur = '';
+    for (const p of parts) {
+      cur += `/${p}`;
+      try {
+        await this.pfs.mkdir(cur);
+      } catch (e) {
+        if (e.code !== 'EEXIST') throw e;
+      }
+    }
+  }
+
+  async _writeIdb(abs, data) {
+    await this._mkdirp(abs.split('/').slice(0, -1).join('/'));
+    await this.pfs.writeFile(abs, data, typeof data === 'string' ? { encoding: 'utf8', mode: 0o644 } : { mode: 0o644 });
+  }
+
+  async _rmrf(abs) {
+    let st;
+    try {
+      st = await this.pfs.stat(abs);
+    } catch {
+      return;
+    }
+    if (st.isDirectory()) {
+      for (const child of await this.pfs.readdir(abs)) await this._rmrf(`${abs}/${child}`);
+      await this.pfs.rmdir(abs);
+    } else {
+      await this.pfs.unlink(abs);
+    }
+  }
+
+  async _scanIdb(abs, base) {
+    let names = [];
+    try {
+      names = await this.pfs.readdir(abs);
+    } catch {
+      return [];
+    }
+    const items = [];
+    for (const name of names) {
+      if (SKIP_DIRS.has(name)) continue;
+      const path = base ? `${base}/${name}` : name;
+      const st = await this.pfs.stat(`${abs}/${name}`);
+      if (st.isDirectory()) {
+        items.push({ name, path, kind: 'directory', children: await this._scanIdb(`${abs}/${name}`, path) });
+      } else {
+        items.push({ name, path, kind: 'file' });
+      }
+    }
+    return this._sort(items);
+  }
+
+  // ───────────────────────────── native internals ─────────────────────────────
+  async _scanNative(dirHandle, base) {
+    const items = [];
+    for await (const entry of dirHandle.values()) {
+      if (SKIP_DIRS.has(entry.name)) continue;
+      const path = base ? `${base}/${entry.name}` : entry.name;
+      if (entry.kind === 'directory') {
+        items.push({ name: entry.name, path, kind: 'directory', children: await this._scanNative(entry, path) });
+      } else {
+        items.push({ name: entry.name, path, kind: 'file' });
+      }
+    }
+    return this._sort(items);
+  }
+
+  async _resolveNative(path, create) {
+    const parts = path.split('/').filter(Boolean);
+    let cur = this.directoryHandle;
+    for (const p of parts.slice(0, -1)) cur = await cur.getDirectoryHandle(p, { create });
+    return await cur.getFileHandle(parts.at(-1), { create });
+  }
+
+  _sort(items) {
+    return items.sort((a, b) => (a.kind === b.kind ? a.name.localeCompare(b.name) : a.kind === 'directory' ? -1 : 1));
+  }
+
+  async _seedDemo() {
+    const files = {
+      'README.md':
+        '# Workspace demo — REA Agentic IDE\n\n' +
+        'Este workspace vive en el almacenamiento persistente del navegador (IndexedDB).\n\n' +
+        '## Primeros pasos\n' +
+        '1. **⚙️ Cuenta** → pega tu API key de Google AI Studio o inicia sesión con Google.\n' +
+        '2. **📁 Abrir Carpeta** → selecciona una carpeta del iPad/PC o **clona un repositorio Git**.\n' +
+        '3. Conversa con el agente: tiene como contexto el archivo abierto y el árbol del proyecto.\n' +
+        '4. **💾 Guardar** → guarda el archivo, o genera el *Plan* y el *Walkthrough* en `Docs/`.\n',
+      'src/main.py':
+        'def execute_task(name: str) -> dict:\n    print(f"[*] Ejecutando tarea: {name}")\n    return {"status": "success"}\n\n\nif __name__ == "__main__":\n    print(execute_task("demo"))\n',
+      'src/app.ts':
+        'export interface Contract {\n  id: string;\n  name: string;\n  status: "draft" | "active" | "verified";\n}\n\nexport class ContractService {\n  private contracts = new Map<string, Contract>();\n\n  register(contract: Contract): boolean {\n    this.contracts.set(contract.id, contract);\n    return true;\n  }\n}\n',
+      'Docs/.keep': ''
+    };
+    for (const [p, c] of Object.entries(files)) await this._writeIdb(`/demo/${p}`, c);
   }
 }
